@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Site Verify",
+  "version": "1.0",
+  "description": "Uses an AI to list any security news regarding a website.",
+  "permissions": ["tabs"],
+  "host_permissions": ["<all_urls>"],
+  "icons": {
+    "16": "siteverify.png"
+  },
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "js": ["content.js"]
+  }],
+  "action": {
+    "default_icon": {
+      "16": "siteverify.png"
+    },
+    "default_popup": "popup.html"
+  }
+  
+}
+
