@@ -3,7 +3,7 @@
   "name": "Site Verify",
   "version": "1.0",
   "description": "Uses an AI to list any security news regarding a website.",
-  "permissions": ["tabs"],
+  "permissions": ["tabs", "activeTab"],
   "host_permissions": ["<all_urls>"],
   "icons": {
     "16": "siteverify.png"

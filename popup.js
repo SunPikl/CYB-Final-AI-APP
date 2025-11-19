@@ -1,4 +1,3 @@
-//Authors:  Morgan & Evan
 
 // A simple function to update the UI with a status and message
 function updateUI(statusText, messageHtml) {
@@ -45,8 +44,8 @@ getCurrentTabUrl();
 
 document.getElementById("ask").addEventListener("click", async () => {
     const websiteUrl = document.getElementById("prompt").value.trim();
-    const geminiApiKey = "AIzaSyA7M0DeyR9wqCBcvLJ_QWqnW2GoDMbEucU"; // 🚨 Re-insert your API Key here!
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`;
+    const geminiApiKey = ""; // 🚨 Re-insert your API Key here!
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${geminiApiKey}`;
 
     // --- Start: Immediate Pre-Flight Checks ---
     if (geminiApiKey === "YOUR_API_KEY_HERE" || geminiApiKey.length < 30) {
@@ -75,21 +74,37 @@ document.getElementById("ask").addEventListener("click", async () => {
             2. Major data breaches or security incidents.
             3. Widespread, reliable scam reports.
             
-            Based on the search results, determine the overall safety rating (HIGH DANGER, MEDIUM WARNING, or SAFE) and provide a concise summary of the reasons. If no severe issues are found, state that the site appears generally safe.
+            Based on the search results, determine the overall safety rating (HIGH DANGER, MEDIUM WARNING, or SAFE) g provide a concise summary of the reasons. If no severe issues are found, state that the site appears generally safe.
+
+            Please use the following format in your response:
+                   **Summary of Findings**
+            (Short summary here)
+
+                   *Evidence*:
+            List each result as " - (*title reason*): (very short description of said reason, around 10 words or less for safe sites) "
+
         `;
         
+        // Send only the supported fields: model + contents (system + user).
+        const systemInstruction =
+            "You are a website safety analyst. Your response MUST begin with the final safety rating (HIGH DANGER 🚨, MEDIUM WARNING ⚠️, or SAFE ✅) followed by a brief, professional summary of the findings.";
+
+        const body = {
+            model: "gemini-2.5-flash",
+            // --- ADD THIS TOP-LEVEL PARAMETER ---
+            //systemInstruction: systemInstruction, 
+            // -------------------------------------
+            contents: [
+                // Only include the user prompt here
+                { role: "user", parts: [{ text: systemInstruction }] },
+                { role: "user", parts: [{ text: geminiPrompt }] }
+            ]
+        };
+
         const geminiRes = await fetch(geminiUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                model: "gemini-2.5-flash",
-                contents: [{ role: "user", parts: [{ text: geminiPrompt }] }],
-                tools: [{ googleSearch: {} }],
-                tools: [{ googleSearch: {} }],
-                generationConfig: {
-                    systemInstruction: "You are a website safety analyst. Your response MUST begin with the final safety rating (HIGH DANGER 🚨, MEDIUM WARNING ⚠️, or SAFE ✅) followed by a brief, professional summary of the findings."
-                }
-            })
+            body: JSON.stringify(body)
         });
 
         // 🚨 CRITICAL FIX: Handle non-200 HTTP statuses immediately
