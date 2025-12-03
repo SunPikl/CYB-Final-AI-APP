@@ -121,8 +121,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 if (vtRes.status === 404) {
                     vtTextSummary = "URL not found in VirusTotal database.";
                     vtHtmlOutput =
-                        `<div style="background:#f9f9f9;padding:10px;border-left:4px solid gray;">
-                        ℹ️ VirusTotal: URL not scanned before.</div>`;
+                        `<div style="background:#f9f9f9;padding:10px;border-left:4px solid gray;">ℹ️ VirusTotal: URL not scanned before.</div>`;
                 } else {
                     vtTextSummary = `VirusTotal error: ${vtRes.status}`;
                     vtHtmlOutput =
@@ -146,14 +145,11 @@ document.addEventListener("DOMContentLoaded", async () => {
                         `Malicious: ${maliciousCount}. Suspicious: ${suspiciousCount}. Vendors: ${badVendors.join(", ")}`;
 
                     vtHtmlOutput =
-                        `<div style="background:#fff0f0;padding:10px;border-left:4px solid red;">
-                        <strong>⚠️ VirusTotal Detections (${maliciousCount})</strong><br>${badVendors.join("<br>")}
-                        </div>`;
+                        `<div style="background:#fff0f0;padding:10px;border-left:4px solid red;"><strong>⚠️ VirusTotal Detections (${maliciousCount})</strong><br>${badVendors.join("<br>")}</div>`;
                 } else {
                     vtTextSummary = "VirusTotal reports 0 malicious detections.";
                     vtHtmlOutput =
-                        `<div style="background:#f0fff4;padding:10px;border-left:4px solid green;">
-                        <strong>✅ VirusTotal Clean:</strong> No malicious reports.</div>`;
+                        `<div style="background:#f0fff4;padding:10px;border-left:4px solid green;"><strong>✅ VirusTotal Clean:</strong> No malicious reports.</div>`;
                 }
             }
 
