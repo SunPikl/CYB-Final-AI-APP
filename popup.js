@@ -19,7 +19,33 @@ function updateUI(statusText, messageHtml) {
     `;
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+// ------------------------------------------------------
+// Read API keys from api_keys.txt
+// ------------------------------------------------------
+async function loadApiKeys() {
+    try {
+        const res = await fetch(chrome.runtime.getURL("api_keys.txt"));
+        const txt = await res.text();
+
+        const lines = txt
+            .split("\n")
+            .map(l => l.trim())
+            .filter(Boolean);
+
+        return {
+            gemini: lines[0] || "",
+            virustotal: lines[1] || ""
+        };
+    } catch (err) {
+        console.error("Failed to load api_keys.txt:", err);
+        return { gemini: "", virustotal: "" };
+    }
+}
+
+// ------------------------------------------------------
+// Wait for DOM then wire things up
+// ------------------------------------------------------
+document.addEventListener("DOMContentLoaded", async () => {
     console.info("popup: DOMContentLoaded");
 
     const askBtn = document.getElementById("ask");
@@ -34,6 +60,18 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
     }
 
+    // Load API keys first
+    const { gemini: geminiApiKey, virustotal: virusTotalApiKey } = await loadApiKeys();
+
+    if (!geminiApiKey || !virusTotalApiKey) {
+        updateUI("API KEY ERROR", "api_keys.txt missing or invalid. Ensure line 1 = Gemini, line 2 = VirusTotal.");
+        return;
+    }
+
+    const geminiUrl =
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`;
+
+    // Autofill URL
     async function getCurrentTabUrl() {
         try {
             let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -49,17 +87,13 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     getCurrentTabUrl();
 
+    // Click handler
     askBtn.addEventListener("click", async () => {
         const websiteUrl = promptInput.value.trim();
         if (!websiteUrl || websiteUrl.startsWith("chrome:")) {
             updateUI("INVALID URL", "Please enter a valid website to check.");
             return;
         }
-
-        // ===== API KEYS =====
-        const geminiApiKey = "AIzaSyBzlc7z3wo7gFBWXTKcmqCDvTifrKrEPSc";
-        const virusTotalApiKey = "209ba3bae170e8cfeb2f2c7c1854e8f51dd5e533cd1c52353448034c183f01bb";
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`;
 
         updateUI("CHECKING...", "Contacting VirusTotal and Gemini...");
 
@@ -86,10 +120,13 @@ document.addEventListener("DOMContentLoaded", () => {
             if (!vtRes.ok) {
                 if (vtRes.status === 404) {
                     vtTextSummary = "URL not found in VirusTotal database.";
-                    vtHtmlOutput = `<div style="background:#f9f9f9;padding:10px;border-left:4px solid gray;">ℹ️ VirusTotal: URL not scanned before.</div>`;
+                    vtHtmlOutput =
+                        `<div style="background:#f9f9f9;padding:10px;border-left:4px solid gray;">
+                        ℹ️ VirusTotal: URL not scanned before.</div>`;
                 } else {
                     vtTextSummary = `VirusTotal error: ${vtRes.status}`;
-                    vtHtmlOutput = `<div style="color:orange;">VirusTotal error: ${vtRes.status}</div>`;
+                    vtHtmlOutput =
+                        `<div style="color:orange;">VirusTotal error: ${vtRes.status}</div>`;
                 }
             } else {
                 const vtData = await vtRes.json();
@@ -101,22 +138,37 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 if (maliciousCount > 0) {
                     const badVendors = Object.entries(results)
-                        .filter(([_, d]) => d.category === "malicious" || d.category === "suspicious")
+                        .filter(([_, d]) =>
+                            d.category === "malicious" || d.category === "suspicious")
                         .map(([vendor, d]) => `${vendor}: ${d.result}`);
-                    vtTextSummary = `Malicious: ${maliciousCount}. Suspicious: ${suspiciousCount}. Vendors: ${badVendors.join(", ")}`;
-                    vtHtmlOutput = `<div style="background:#fff0f0;padding:10px;border-left:4px solid red;"><strong>⚠️ VirusTotal Detections (${maliciousCount})</strong><br>${badVendors.join("<br>")}</div>`;
+
+                    vtTextSummary =
+                        `Malicious: ${maliciousCount}. Suspicious: ${suspiciousCount}. Vendors: ${badVendors.join(", ")}`;
+
+                    vtHtmlOutput =
+                        `<div style="background:#fff0f0;padding:10px;border-left:4px solid red;">
+                        <strong>⚠️ VirusTotal Detections (${maliciousCount})</strong><br>${badVendors.join("<br>")}
+                        </div>`;
                 } else {
                     vtTextSummary = "VirusTotal reports 0 malicious detections.";
-                    vtHtmlOutput = `<div style="background:#f0fff4;padding:10px;border-left:4px solid green;"><strong>✅ VirusTotal Clean:</strong> No malicious reports.</div>`;
+                    vtHtmlOutput =
+                        `<div style="background:#f0fff4;padding:10px;border-left:4px solid green;">
+                        <strong>✅ VirusTotal Clean:</strong> No malicious reports.</div>`;
                 }
             }
+
         } catch (err) {
             console.error("VirusTotal fetch error:", err);
             vtTextSummary = "VirusTotal lookup failed.";
-            vtHtmlOutput = `<div style="color:orange;">VirusTotal connection error.</div>`;
+            vtHtmlOutput =
+                `<div style="color:orange;">VirusTotal connection error.</div>`;
         }
 
         updateUI("ANALYZING...", `${vtHtmlOutput}<br>Gemini is analyzing...`);
+
+        // ------------------------------------------------------
+        // Gemini prompt
+        // ------------------------------------------------------
         const systemPrompt = `You are a website safety analyst.
 Your response MUST begin with one rating on the first line: HIGH DANGER, MEDIUM WARNING, or SAFE.
 Then provide a short summary and bullet points.
@@ -144,19 +196,13 @@ Evidence:
 Provide at least 4 bullet points.
 Use 10 words max for SAFE-site explanations.`;
 
-
-        // 🔥🔥 CORRECT FORMAT FOR GEMINI 🔥🔥
         const mergedPrompt = `${systemPrompt}\n\n${userPrompt}`;
 
         let geminiText = "";
         try {
             const body = {
                 contents: [
-                    {
-                        parts: [
-                            { text: mergedPrompt }
-                        ]
-                    }
+                    { parts: [{ text: mergedPrompt }] }
                 ]
             };
 
@@ -173,12 +219,15 @@ Use 10 words max for SAFE-site explanations.`;
                 return;
             }
 
-            const data = await res.json().catch((e) => {
+            const data = await res.json().catch(e => {
                 console.error("Parsing Gemini JSON failed:", e);
                 return null;
             });
 
-            geminiText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "No response.";
+            geminiText =
+                data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
+                || "No response.";
+
         } catch (err) {
             console.error("Gemini network error:", err);
             updateUI("NETWORK ERROR", vtHtmlOutput + "<br>Gemini failed to respond.");
@@ -189,7 +238,7 @@ Use 10 words max for SAFE-site explanations.`;
         // Rating extraction
         // ------------------------------------------------------
         let rating = "UNKNOWN";
-        const firstLine = (geminiText.split("\n")[0] || "").toUpperCase();
+        const firstLine = geminiText.split("\n")[0].toUpperCase();
 
         if (firstLine.startsWith("HIGH DANGER")) rating = "HIGH DANGER";
         else if (firstLine.startsWith("MEDIUM WARNING")) rating = "MEDIUM WARNING";

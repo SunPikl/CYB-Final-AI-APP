@@ -17,7 +17,11 @@
       "16": "siteverify.png"
     },
     "default_popup": "popup.html"
-  }
-  
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["api_keys.txt"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }
-
