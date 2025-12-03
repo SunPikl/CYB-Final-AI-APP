@@ -1,15 +1,16 @@
-// A simple function to update the UI with a status and message
+// popup.js (Hardened + safe)
+// ------------------------------------------------------
 function updateUI(statusText, messageHtml) {
     const responseDiv = document.getElementById("response");
-    let color = 'gray';
-
-    if (statusText.includes('DANGER')) {
-        color = 'red';
-    } else if (statusText.includes('WARNING')) {
-        color = 'orange';
-    } else if (statusText.includes('SAFE')) {
-        color = 'green';
+    if (!responseDiv) {
+        console.warn("updateUI: #response element not found.");
+        return;
     }
+
+    let color = "gray";
+    if (statusText.includes("DANGER")) color = "red";
+    else if (statusText.includes("WARNING")) color = "orange";
+    else if (statusText.includes("SAFE")) color = "green";
 
     responseDiv.innerHTML = `
         <h2>Final Safety Rating: <span style="color: ${color};">${statusText}</span></h2>
@@ -18,199 +19,183 @@ function updateUI(statusText, messageHtml) {
     `;
 }
 
-// Function to get the current tab's URL and populate the input field
-async function getCurrentTabUrl() {
-    let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    
-    const inputField = document.getElementById("prompt");
+document.addEventListener("DOMContentLoaded", () => {
+    console.info("popup: DOMContentLoaded");
 
-    if (tab && tab.url && !tab.url.startsWith('chrome:')) {
-        inputField.value = tab.url;
-    } else {
-        inputField.placeholder = "Enter URL (e.g., example.com)";
-    }
-}
-
-// Run the function immediately when the script loads
-getCurrentTabUrl();
-
-// ----------------------------------------------------------------------
-// MAIN LOGIC (VirusTotal + Gemini)
-// ----------------------------------------------------------------------
-
-document.getElementById("ask").addEventListener("click", async () => {
-    const websiteUrl = document.getElementById("prompt").value.trim();
+    const askBtn = document.getElementById("ask");
+    const promptInput = document.getElementById("prompt");
     const responseDiv = document.getElementById("response");
 
-    // 🚨 KEYS: Insert your keys here
-    const geminiApiKey = ""; 
-    const virusTotalApiKey = ""; 
-
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`;
-
-    // --- 1. Immediate Pre-Flight Checks ---
-    if (!geminiApiKey) {
-        updateUI("API KEY ERROR", "<strong>Gemini API Key Missing.</strong> Please check your code.");
-        return;
-    }
-    
-    if (!websiteUrl || websiteUrl.length < 5 || websiteUrl.startsWith('chrome:')) {
-        updateUI("INVALID URL", "Please enter a valid URL (e.g., example.com) to analyze.");
+    if (!askBtn || !promptInput || !responseDiv) {
+        console.error("popup: Required DOM elements missing.");
+        if (responseDiv) {
+            responseDiv.innerHTML = "<strong>Popup initialization error:</strong> missing DOM elements.";
+        }
         return;
     }
 
-    // Set initial loading message
-    updateUI("CHECKING...", "Contacting VirusTotal and Gemini...");
+    async function getCurrentTabUrl() {
+        try {
+            let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (tab && tab.url && !tab.url.startsWith("chrome:")) {
+                promptInput.value = tab.url;
+            } else {
+                promptInput.placeholder = "Enter URL (e.g., example.com)";
+            }
+        } catch (err) {
+            console.warn("getCurrentTabUrl error:", err);
+            promptInput.placeholder = "Enter URL (e.g., example.com)";
+        }
+    }
+    getCurrentTabUrl();
 
-    // --- 2. VirusTotal Call (Runs BEFORE Gemini) ---
-    // --- 2. VIRUSTOTAL CALL (Lookup Mode) ---
-    let vtReportHtml = "";
+    askBtn.addEventListener("click", async () => {
+        const websiteUrl = promptInput.value.trim();
+        if (!websiteUrl || websiteUrl.startsWith("chrome:")) {
+            updateUI("INVALID URL", "Please enter a valid website to check.");
+            return;
+        }
 
-    try {
-        if (virusTotalApiKey) {
-            // A. Create the VirusTotal "URL Identifier"
-            // (Base64 encode the URL, remove padding '=', replace '+' with '-', replace '/' with '_')
-            const urlId = btoa(websiteUrl).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        // ===== API KEYS =====
+        const geminiApiKey = "AIzaSyBzlc7z3wo7gFBWXTKcmqCDvTifrKrEPSc";
+        const virusTotalApiKey = "209ba3bae170e8cfeb2f2c7c1854e8f51dd5e533cd1c52353448034c183f01bb";
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`;
 
-            const vtOptions = {
-                method: 'GET',
+        updateUI("CHECKING...", "Contacting VirusTotal and Gemini...");
+
+        // ------------------------------------------------------
+        // VirusTotal
+        // ------------------------------------------------------
+        let vtTextSummary = "No VirusTotal data available.";
+        let vtHtmlOutput = "";
+
+        try {
+            const urlId = btoa(websiteUrl)
+                .replace(/\+/g, "-")
+                .replace(/\//g, "_")
+                .replace(/=+$/, "");
+
+            const vtRes = await fetch(`https://www.virustotal.com/api/v3/urls/${urlId}`, {
+                method: "GET",
                 headers: {
-                    'accept': 'application/json',
-                    'x-apikey': virusTotalApiKey
+                    accept: "application/json",
+                    "x-apikey": virusTotalApiKey
                 }
+            });
+
+            if (!vtRes.ok) {
+                if (vtRes.status === 404) {
+                    vtTextSummary = "URL not found in VirusTotal database.";
+                    vtHtmlOutput = `<div style="background:#f9f9f9;padding:10px;border-left:4px solid gray;">ℹ️ VirusTotal: URL not scanned before.</div>`;
+                } else {
+                    vtTextSummary = `VirusTotal error: ${vtRes.status}`;
+                    vtHtmlOutput = `<div style="color:orange;">VirusTotal error: ${vtRes.status}</div>`;
+                }
+            } else {
+                const vtData = await vtRes.json();
+                const stats = vtData.data?.attributes?.last_analysis_stats || {};
+                const results = vtData.data?.attributes?.last_analysis_results || {};
+
+                const maliciousCount = stats.malicious || 0;
+                const suspiciousCount = stats.suspicious || 0;
+
+                if (maliciousCount > 0) {
+                    const badVendors = Object.entries(results)
+                        .filter(([_, d]) => d.category === "malicious" || d.category === "suspicious")
+                        .map(([vendor, d]) => `${vendor}: ${d.result}`);
+                    vtTextSummary = `Malicious: ${maliciousCount}. Suspicious: ${suspiciousCount}. Vendors: ${badVendors.join(", ")}`;
+                    vtHtmlOutput = `<div style="background:#fff0f0;padding:10px;border-left:4px solid red;"><strong>⚠️ VirusTotal Detections (${maliciousCount})</strong><br>${badVendors.join("<br>")}</div>`;
+                } else {
+                    vtTextSummary = "VirusTotal reports 0 malicious detections.";
+                    vtHtmlOutput = `<div style="background:#f0fff4;padding:10px;border-left:4px solid green;"><strong>✅ VirusTotal Clean:</strong> No malicious reports.</div>`;
+                }
+            }
+        } catch (err) {
+            console.error("VirusTotal fetch error:", err);
+            vtTextSummary = "VirusTotal lookup failed.";
+            vtHtmlOutput = `<div style="color:orange;">VirusTotal connection error.</div>`;
+        }
+
+        updateUI("ANALYZING...", `${vtHtmlOutput}<br>Gemini is analyzing...`);
+        const systemPrompt = `You are a website safety analyst.
+Your response MUST begin with one rating on the first line: HIGH DANGER, MEDIUM WARNING, or SAFE.
+Then provide a short summary and bullet points.
+No bold text. No special formatting. Plain text only.`;
+
+        const userPrompt = `Perform a simple, clear web search for security risks linked to: ${websiteUrl}
+
+Include:
+1) Malware or phishing reports
+2) Major data breaches or incidents
+3) Consistent scam reports
+4) Recent security news or blog findings
+
+VirusTotal summary:
+${vtTextSummary}
+
+If Fortinet, BitDefender, or VIPRE report issues, classify severity as high.
+
+Output format:
+Summary of Findings:
+Short, easy-to-read summary (max 100 words)
+
+Evidence:
+-- title reason: short explanation
+Provide at least 4 bullet points.
+Use 10 words max for SAFE-site explanations.`;
+
+
+        // 🔥🔥 CORRECT FORMAT FOR GEMINI 🔥🔥
+        const mergedPrompt = `${systemPrompt}\n\n${userPrompt}`;
+
+        let geminiText = "";
+        try {
+            const body = {
+                contents: [
+                    {
+                        parts: [
+                            { text: mergedPrompt }
+                        ]
+                    }
+                ]
             };
 
-            // B. Fetch the EXISTING report
-            const vtRes = await fetch(`https://www.virustotal.com/api/v3/urls/${urlId}`, vtOptions);
+            const res = await fetch(geminiUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            });
 
-            if (vtRes.ok) {
-                const vtData = await vtRes.json();
-                const stats = vtData.data.attributes.last_analysis_stats;
-                const results = vtData.data.attributes.last_analysis_results;
-
-                // C. Check if any vendors flagged it
-                if (stats.malicious > 0 || stats.suspicious > 0) {
-                    // Filter the specific vendors who said it was bad
-                    let badVendors = [];
-                    for (const [vendor, details] of Object.entries(results)) {
-                        if (details.category === 'malicious' || details.category === 'suspicious') {
-                            badVendors.push(`<span style="color:red; font-weight:bold;">${vendor}:</span> ${details.result}`);
-                        }
-                    }
-
-                    // Display the list of vendors
-                    vtReportHtml = `
-                        <div style="background: #fff0f0; padding: 5px; border-radius: 5px; border-left: 4px solid red; margin-bottom: 5px; color: #333; margin-top: 0; margin-left: 0; padding-left: 0;">
-                            <strong>⚠️ VirusTotal Detections (${stats.malicious}):</strong><br>
-                            <ul style="margin: 5px 0 0 5px; padding: 0;">
-                                ${badVendors.map(v => `<li>${v}</li>`).join('')}
-                            </ul>
-                        </div>
-                    `;
-                } else {
-                    // It's Clean
-                    vtReportHtml = `
-                        <div style="background: #f0fff4; padding: 5px; border-radius: 5px; border-left: 0px solid green; margin-bottom: 10px; color: #333; margin-top: 0; margin-left: 0; padding-left: 0;">
-                            <strong>✅ VirusTotal Clean:</strong> 0/${stats.harmless + stats.malicious} vendors flagged this site.
-                        </div>
-                    `;
-                }
-            } else if (vtRes.status === 404) {
-                // URL has never been scanned before
-                vtReportHtml = `
-                    <div style="background: #f9f9f9; padding: 10px; border-radius: 5px; margin-bottom: 10px; border-left: 4px solid gray;">
-                        <strong>ℹ️ VirusTotal:</strong> URL not found in database (New URL).
-                    </div>
-                `;
-            } else {
-                vtReportHtml = `<p style="color:orange;">(VirusTotal error: ${vtRes.status})</p>`;
+            if (!res.ok) {
+                const text = await res.text().catch(() => "");
+                console.error("Gemini non-ok:", res.status, text);
+                updateUI("API ERROR", vtHtmlOutput + `<br>Gemini error: ${res.status}`);
+                return;
             }
-        }
-    } catch (err) {
-        console.error("VT Error:", err);
-        vtReportHtml = `<p style="color:orange;">(VirusTotal connection failed)</p>`;
-    }
 
-    // Update UI
-    updateUI("ANALYZING...", `${vtReportHtml}<br><strong>Gemini is thinking...</strong>`);
+            const data = await res.json().catch((e) => {
+                console.error("Parsing Gemini JSON failed:", e);
+                return null;
+            });
 
-    // --- 3. Gemini Call (Runs AFTER VirusTotal is submitted) ---
-    let finalAlert = { status: "CHECKING...", details: [] };
-
-    try {
-        const geminiPrompt = `
-            Perform a comprehensive web search for all known security risks associated with the website: **${websiteUrl}**. 
-            This includes, but is not limited to: 
-            1. Active malware or phishing reports.
-            2. Major data breaches or security incidents.
-            3. Widespread, reliable scam reports.
-
-            In addition, check for any recent news articles or trusted security blogs discussing vulnerabilities or threats related to this website. Here is a summary of vendors reporting the site on VirusTotal to assist in your summary: ${vtReportHtml}. If the vendors Fortinet, BitDefender, or VIPRE report an issue, please consider that a higher-severity finding. Only reserve 1 to 2 bullet points regarding VirusTotal for Evidence.
-
-            Based on the search results, determine the overall safety rating (HIGH DANGER, MEDIUM WARNING, or SAFE) and provide a concise summary.
-
-            Please use the following format:
-            **Summary of Findings**
-            (Short summary up to 100 words here)
-
-            *Evidence*:
-            List at least 4 results and list each result as " -- *title reason*: very short description of said reason (around 10 words or less ONLY for safe sites)"
-        `;
-        
-        const systemInstruction =
-            "You are a website safety analyst. Your response MUST begin with the final safety rating (HIGH DANGER 🚨, MEDIUM WARNING ⚠️, or SAFE ✅) followed by a brief, professional summary of the findings.";
-
-        const body = {
-            model: "gemini-2.5-flash",
-            contents: [
-                { role: "user", parts: [{ text: systemInstruction }] },
-                { role: "user", parts: [{ text: geminiPrompt }] }
-            ]
-        };
-
-        const geminiRes = await fetch(geminiUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body)
-        });
-
-        if (!geminiRes.ok) {
-            const errorData = await geminiRes.json();
-            const message = errorData.error ? errorData.error.message : geminiRes.statusText;
-            updateUI("API ERROR", `${vtReportHtml}<br><strong>Gemini Error:</strong> ${message}`);
+            geminiText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "No response.";
+        } catch (err) {
+            console.error("Gemini network error:", err);
+            updateUI("NETWORK ERROR", vtHtmlOutput + "<br>Gemini failed to respond.");
             return;
         }
 
-        const geminiData = await geminiRes.json();
-        const geminiText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        // ------------------------------------------------------
+        // Rating extraction
+        // ------------------------------------------------------
+        let rating = "UNKNOWN";
+        const firstLine = (geminiText.split("\n")[0] || "").toUpperCase();
 
-        if (!geminiText) {
-            updateUI("NO RESPONSE", `${vtReportHtml}<br>The model did not return a valid safety analysis.`);
-            return;
-        }
+        if (firstLine.startsWith("HIGH DANGER")) rating = "HIGH DANGER";
+        else if (firstLine.startsWith("MEDIUM WARNING")) rating = "MEDIUM WARNING";
+        else if (firstLine.startsWith("SAFE")) rating = "SAFE";
 
-        // Extract Rating
-        if (geminiText.includes("HIGH DANGER 🚨")) finalAlert.status = "HIGH DANGER 🚨";
-        else if (geminiText.includes("MEDIUM WARNING ⚠️")) finalAlert.status = "MEDIUM WARNING ⚠️";
-        else if (geminiText.includes("SAFE ✅")) finalAlert.status = "SAFE ✅";
-        else finalAlert.status = "UNKNOWN RATING";
-        
-        // Clean up text
-        finalAlert.details.push(geminiText.replace(/HIGH DANGER 🚨|MEDIUM WARNING ⚠️|SAFE ✅|UNKNOWN RATING/g, '').trim());
-
-    } catch (error) {
-        console.error("Gemini Network Error:", error);
-        finalAlert.status = "NETWORK ERROR";
-        finalAlert.details.push("Could not connect to Gemini API.");
-    }
-    
-    // --- 4. Final Display (Merge VT and Gemini) ---
-    // We combine the VirusTotal HTML block with the Gemini text block
-    const finalHtml = `
-        ${vtReportHtml}
-        <hr style="border: 0; border-top: 1px solid #ccc; margin: 10px 0;">
-        ${finalAlert.details.join('')}
-    `;
-
-    updateUI(finalAlert.status, finalHtml);
+        const finalHtml = `${vtHtmlOutput}<hr>${geminiText}`;
+        updateUI(rating, finalHtml);
+    });
 });
